@@ -1,4 +1,5 @@
 import streamlit as st
+import streamlit.components.v1 as components
 import yt_dlp
 import os
 import shutil
@@ -31,6 +32,38 @@ def get_cookies_path(uploaded_file):
 def sanitize_filename(name):
     """Removes illegal characters from filenames."""
     return re.sub(r'[\\/*?:"<>|]', "", name).strip()
+
+def send_browser_notification(title, body):
+    """Injects JavaScript to trigger a browser-level notification."""
+    js_code = f"""
+    <script>
+        (function() {{
+            if (!("Notification" in window)) {{
+                console.log("This browser does not support desktop notification");
+                return;
+            }}
+            
+            function spawnNotification() {{
+                new Notification("{title}", {{
+                    body: "{body}",
+                    icon: "https://cdn-icons-png.flaticon.com/512/2921/2921222.png"
+                }});
+            }}
+
+            // If granted, show. If not, try to request (might be blocked without user click context, but worth trying)
+            if (Notification.permission === "granted") {{
+                spawnNotification();
+            }} else if (Notification.permission !== "denied") {{
+                Notification.requestPermission().then(function (permission) {{
+                    if (permission === "granted") {{
+                        spawnNotification();
+                    }}
+                }});
+            }}
+        }})();
+    </script>
+    """
+    components.html(js_code, height=0, width=0)
 
 def convert_to_quicktime_mp4(input_path, custom_name=None):
     """
@@ -116,6 +149,13 @@ def main():
         uploaded_cookie = st.file_uploader("Upload cookies.txt", type=["txt"])
         
         cookie_path = get_cookies_path(uploaded_cookie)
+        
+        st.markdown("---")
+        st.header("🔔 Notifications")
+        if st.button("Test Notification"):
+            send_browser_notification("InstaTool Test", "If you see this, notifications are working!")
+            st.success("Notification sent! Check your desktop/notification center.")
+        
         if not cookie_path:
             st.warning("⚠️ Please upload cookies.txt to start.")
             return
@@ -159,7 +199,6 @@ def main():
                 
                 if f_path and os.path.exists(f_path):
                     valid_files.append(f_path)
-                    # --- NOTIFICATION FEATURE ---
                     st.toast(f"✅ Ready: {os.path.basename(f_path)}", icon="✨")
                 else:
                     failed_lines.append(url)
@@ -170,9 +209,15 @@ def main():
             
             # 3. Zip and Serve
             if valid_files:
-                # --- CELEBRATION FEATURE ---
+                # --- CELEBRATION & NOTIFICATION ---
                 st.balloons() 
                 st.success(f"🎉 All Done! {len(valid_files)} videos upscaled & ready.")
+                
+                # Trigger Browser Notification
+                send_browser_notification(
+                    "InstaTool: Batch Complete!", 
+                    f"Successfully processed {len(valid_files)} videos."
+                )
                 
                 zip_name = "reels_download.zip"
                 zip_path = os.path.join(tempfile.gettempdir(), zip_name)
