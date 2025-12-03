@@ -127,8 +127,11 @@ def download_single_video(url, output_dir, cookies_path, custom_name=None):
             if not os.path.exists(filename):
                 video_id = info.get('id')
                 files = list(Path(output_dir).glob(f"*{video_id}*"))
-                if files: filename = str(files[0])
-                else: return None, "File not found after download"
+                if files: 
+                    filename = str(files[0])
+                else:
+                    # RAISE ERROR to trigger the fallback block below
+                    raise FileNotFoundError("Initial download failed to produce file")
             
             # Pass to converter
             converted_path = convert_to_quicktime_mp4(filename, custom_name)
@@ -136,11 +139,14 @@ def download_single_video(url, output_dir, cookies_path, custom_name=None):
 
     except Exception as e:
         # --- YouTube Specific Fallback ---
-        # If 'bestvideo+bestaudio' fails (common on servers), try 'best[ext=mp4]' to avoid merging
+        # If 'bestvideo+bestaudio' fails (common on servers), try 'best' (single file)
         if domain == "YouTube":
             try:
                 print(f"Retrying YouTube with fallback format...")
-                ydl_opts['format'] = 'best[ext=mp4]/best' # Safer single-file format
+                # 'best' selects the best single file containing both video+audio
+                # This avoids the ffmpeg merge step which often fails on cloud instances
+                ydl_opts['format'] = 'best' 
+                
                 with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                     info = ydl.extract_info(url, download=True)
                     filename = ydl.prepare_filename(info)
@@ -149,7 +155,7 @@ def download_single_video(url, output_dir, cookies_path, custom_name=None):
                         video_id = info.get('id')
                         files = list(Path(output_dir).glob(f"*{video_id}*"))
                         if files: filename = str(files[0])
-                        else: return None, "Fallback failed: File not found"
+                        else: return None, "Fallback failed: File still not found"
                     
                     converted_path = convert_to_quicktime_mp4(filename, custom_name)
                     return converted_path, None
