@@ -96,6 +96,10 @@ def convert_to_quicktime_mp4(input_path, custom_name=None):
         return str(input_path)
 
 def download_single_video(url, output_dir, cookies_path, custom_name=None):
+    # Sanitize URL (remove tracking params)
+    if "?" in url:
+        url = url.split("?")[0]
+
     # Determine domain for specific handling if needed
     domain = "Generic"
     if "instagram" in url: domain = "Instagram"
@@ -132,11 +136,11 @@ def download_single_video(url, output_dir, cookies_path, custom_name=None):
 
     except Exception as e:
         # --- YouTube Specific Fallback ---
-        # If 'bestvideo+bestaudio' fails (common on servers), try 'best' (single file)
+        # If 'bestvideo+bestaudio' fails (common on servers), try 'best[ext=mp4]' to avoid merging
         if domain == "YouTube":
             try:
                 print(f"Retrying YouTube with fallback format...")
-                ydl_opts['format'] = 'best'
+                ydl_opts['format'] = 'best[ext=mp4]/best' # Safer single-file format
                 with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                     info = ydl.extract_info(url, download=True)
                     filename = ydl.prepare_filename(info)
