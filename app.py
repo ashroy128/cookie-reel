@@ -139,13 +139,14 @@ def download_single_video(url, output_dir, cookies_path, custom_name=None):
 
     except Exception as e:
         # --- YouTube Specific Fallback ---
-        # If 'bestvideo+bestaudio' fails (common on servers), try 'best' (single file)
         if domain == "YouTube":
             try:
-                print(f"Retrying YouTube with fallback format...")
-                # 'best' selects the best single file containing both video+audio
-                # This avoids the ffmpeg merge step which often fails on cloud instances
-                ydl_opts['format'] = 'best' 
+                # Remove cookies for YouTube fallback to avoid conflicts
+                if 'cookiefile' in ydl_opts:
+                    del ydl_opts['cookiefile']
+                
+                # 'best[ext=mp4]' selects the best single MP4 file 
+                ydl_opts['format'] = 'best[ext=mp4]/best'
                 
                 with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                     info = ydl.extract_info(url, download=True)
