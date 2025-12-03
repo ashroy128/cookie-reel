@@ -101,7 +101,7 @@ def main():
     with st.sidebar:
         
         st.header("🔐 Authentication")
-        st.info("Upload `cookies.txt` to bypass Instagram login.")
+        st.info("Upload cookies to bypass Instagram login.")
         uploaded_cookie = st.file_uploader("Upload cookies.txt", type=["txt"])
         
         cookie_path = get_cookies_path(uploaded_cookie)
