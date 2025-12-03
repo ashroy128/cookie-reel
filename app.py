@@ -11,7 +11,7 @@ import time
 from pathlib import Path
 
 # --- Page Config ---
-st.set_page_config(page_title="InstaTool: Batch & Rename", page_icon="📦", layout="wide")
+st.set_page_config(page_title="UniTool: All-in-One Downloader", page_icon="📦", layout="wide")
 
 # --- Helper Functions ---
 
@@ -33,8 +33,35 @@ def sanitize_filename(name):
     """Removes illegal characters from filenames."""
     return re.sub(r'[\\/*?:"<>|]', "", name).strip()
 
+def play_success_sound():
+    """Plays a notification sound (Ding) using HTML5 Audio."""
+    sound_url = "https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3"
+    st.markdown(f"""
+        <audio autoplay style="display:none;">
+            <source src="{sound_url}" type="audio/mp3">
+        </audio>
+    """, unsafe_allow_html=True)
+
+def trigger_js_notification(title, body):
+    """Directly triggers a notification via JS injection."""
+    js_code = f"""
+    <script>
+        if (Notification.permission === "granted") {{
+            new Notification("{title}", {{
+                body: "{body}",
+                icon: "https://cdn-icons-png.flaticon.com/512/190/190411.png"
+            }});
+        }} else {{
+            console.log("Notification permission not granted.");
+        }}
+    </script>
+    """
+    components.html(js_code, height=0, width=0)
 
 def convert_to_quicktime_mp4(input_path, custom_name=None):
+    """
+    Standardizes ANY video input to Mac-compatible H.264/AAC 1080p MP4.
+    """
     path_obj = Path(input_path)
     if not path_obj.exists(): return None
 
@@ -54,14 +81,14 @@ def convert_to_quicktime_mp4(input_path, custom_name=None):
             vcodec='libx264', 
             acodec='aac', 
             pix_fmt='yuv420p',
-            vf='scale=1080:-2:flags=lanczos',
+            vf='scale=1080:-2:flags=lanczos', # Force 1080p width
             strict='experimental',
             loglevel='error'
         )
         ffmpeg.run(stream, overwrite_output=True)
         
         if output_path.exists() and output_path.stat().st_size > 0:
-            path_obj.unlink()
+            path_obj.unlink() # Delete original raw download
             return str(output_path)
         return str(input_path)
     except Exception as e:
@@ -69,8 +96,18 @@ def convert_to_quicktime_mp4(input_path, custom_name=None):
         return str(input_path)
 
 def download_single_video(url, output_dir, cookies_path, custom_name=None):
+    # Determine domain for specific handling if needed
+    domain = "Generic"
+    if "instagram" in url: domain = "Instagram"
+    elif "tiktok" in url: domain = "TikTok"
+    elif "youtube" in url or "youtu.be" in url: domain = "YouTube"
+    elif "pinterest" in url: domain = "Pinterest"
+
+    # Universal Options
     ydl_opts = {
-        'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
+        # Allow ANY format initially (webm, mkv, etc.) because we convert it later anyway.
+        # This is more reliable for YouTube/TikTok than forcing mp4 immediately.
+        'format': 'bestvideo+bestaudio/best', 
         'outtmpl': str(Path(output_dir) / '%(id)s.%(ext)s'), 
         'noplaylist': True,
         'quiet': True,
@@ -81,34 +118,40 @@ def download_single_video(url, output_dir, cookies_path, custom_name=None):
     
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            # Extract info
             info = ydl.extract_info(url, download=True)
             filename = ydl.prepare_filename(info)
+            
+            # Verify file existence (handling extensions like .webm or .mkv)
             if not os.path.exists(filename):
                 video_id = info.get('id')
+                # Search for any file with this ID (ignoring extension)
                 files = list(Path(output_dir).glob(f"*{video_id}*"))
                 if files: filename = str(files[0])
                 else: return None
+            
+            # Pass to converter
             return convert_to_quicktime_mp4(filename, custom_name)
     except Exception as e:
+        print(f"Download Error ({domain}): {e}")
         return None
 
 # --- Main UI ---
 def main():
-    st.title("📦 InstaTool")
-    st.markdown("Download Reels. **Auto-Upscale to 1080p.** Edit Ready.")
+    st.title("📦 UniTool: All-in-One Downloader")
+    st.markdown("Supports **Instagram, TikTok, YouTube & Pinterest**. Auto-Upscales to 1080p.")
 
     # --- Sidebar ---
     with st.sidebar:
-        
         st.header("🔐 Authentication")
-        st.info("Upload cookies to bypass Instagram login.")
+        st.info("Upload cookies if you face login issues (Required for Instagram).")
         uploaded_cookie = st.file_uploader("Upload cookies.txt", type=["txt"])
         
         cookie_path = get_cookies_path(uploaded_cookie)
         
+        # Optional: Allow running without cookies for TikTok/Pinterest
         if not cookie_path:
-            st.warning("⚠️ Please upload cookies.txt to start.")
-            return
+            st.warning("⚠️ No cookies uploaded. Instagram links will likely fail. TikTok/YouTube might work.")
 
     # --- Main Input ---
     st.markdown("### Paste URLs below")
@@ -117,7 +160,7 @@ def main():
     raw_input = st.text_area(
         "Input Area", 
         height=200, 
-        placeholder="https://www.instagram.com/reel/C-abc123/ - My Viral Video\nhttps://www.instagram.com/reel/D-xyz987/"
+        placeholder="https://www.instagram.com/reel/C-abc123/ - Insta Video\nhttps://www.tiktok.com/@user/video/12345 - TikTok Video\nhttps://youtu.be/dQw4w9WgXcQ - YouTube Video"
     )
     
     if st.button("Download All", type="primary"):
@@ -156,9 +199,20 @@ def main():
             
             # --- Success Logic ---
             if valid_files:
+                # 1. Play Sound (Native Player)
+                play_success_sound()
                 
+                # 2. Trigger Notification (Direct Injection)
+                trigger_js_notification(
+                    "Batch Complete", 
+                    f"{len(valid_files)} videos downloaded & converted!"
+                )
                 
-                zip_name = "reels_download.zip"
+                # 3. Show Balloons
+                st.balloons()
+                st.success(f"🎉 All Done! {len(valid_files)} videos upscaled & ready.")
+                
+                zip_name = "universal_downloads.zip"
                 zip_path = os.path.join(tempfile.gettempdir(), zip_name)
                 
                 with zipfile.ZipFile(zip_path, 'w') as zipf:
