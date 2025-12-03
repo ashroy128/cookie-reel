@@ -33,74 +33,6 @@ def sanitize_filename(name):
     """Removes illegal characters from filenames."""
     return re.sub(r'[\\/*?:"<>|]', "", name).strip()
 
-def play_success_sound():
-    """Plays a notification sound using Streamlit's native player."""
-    sound_url = "https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3"
-    # Autoplay is crucial here. We place it in an empty container to keep UI clean.
-    st.audio(sound_url, format="audio/mp3", autoplay=True)
-
-def setup_notifications():
-    """
-    Simple HTML button to request permission.
-    """
-    js_code = """
-    <script>
-        function requestPermission() {
-            Notification.requestPermission().then(function (permission) {
-                if (permission === "granted") {
-                    navigator.serviceWorker.ready.then(function(registration) {
-                        registration.showNotification('InstaTool', {
-                            body: 'Notifications Enabled!',
-                            icon: 'https://cdn-icons-png.flaticon.com/512/190/190411.png'
-                        });
-                    });
-                    // Fallback for non-service worker contexts
-                    new Notification("InstaTool", { 
-                        body: "✅ Notifications enabled!",
-                        icon: "https://cdn-icons-png.flaticon.com/512/190/190411.png"
-                    });
-                } else {
-                    alert("Permission was " + permission);
-                }
-            });
-        }
-    </script>
-    
-    <div style="margin-bottom: 10px;">
-        <button onclick="requestPermission()" style="
-            background-color: #4CAF50; 
-            border: none; 
-            color: white; 
-            padding: 10px 20px; 
-            text-align: center; 
-            text-decoration: none; 
-            display: inline-block; 
-            font-size: 14px; 
-            border-radius: 5px; 
-            cursor: pointer;
-            width: 100%;
-            font-weight: bold;">
-            🔔 Enable Desktop Alerts
-        </button>
-    </div>
-    """
-    components.html(js_code, height=60)
-
-def trigger_js_notification(title, body):
-    """Directly triggers a notification via JS injection."""
-    js_code = f"""
-    <script>
-        if (Notification.permission === "granted") {{
-            new Notification("{title}", {{
-                body: "{body}",
-                icon: "https://cdn-icons-png.flaticon.com/512/190/190411.png"
-            }});
-        }} else {{
-            console.log("Notification permission not granted.");
-        }}
-    </script>
-    """
-    components.html(js_code, height=0, width=0)
 
 def convert_to_quicktime_mp4(input_path, custom_name=None):
     path_obj = Path(input_path)
@@ -167,10 +99,6 @@ def main():
 
     # --- Sidebar ---
     with st.sidebar:
-        st.header("🔔 Settings")
-        # 1. Setup Notifications UI
-        setup_notifications()
-        st.markdown("---")
         
         st.header("🔐 Authentication")
         st.info("Upload `cookies.txt` to bypass Instagram login.")
