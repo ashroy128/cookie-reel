@@ -34,82 +34,73 @@ def sanitize_filename(name):
     return re.sub(r'[\\/*?:"<>|]', "", name).strip()
 
 def play_success_sound():
-    """Plays a notification sound (Ding) using HTML5 Audio."""
-    # Short pleasant chime sound
-    sound_url = "[https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3](https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3)"
-    st.markdown(f"""
-        <audio autoplay style="display:none;">
-            <source src="{sound_url}" type="audio/mp3">
-        </audio>
-    """, unsafe_allow_html=True)
+    """Plays a notification sound using Streamlit's native player."""
+    sound_url = "https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3"
+    # Autoplay is crucial here. We place it in an empty container to keep UI clean.
+    st.audio(sound_url, format="audio/mp3", autoplay=True)
 
 def setup_notifications():
     """
-    Renders a persistent HTML button to request notification permissions.
-    This bypasses Streamlit's rerun cycle to ensure the 'User Gesture' is valid.
+    Simple HTML button to request permission.
     """
     js_code = """
     <script>
         function requestPermission() {
-            if (!("Notification" in window)) {
-                alert("This browser does not support desktop notifications");
-            } else {
-                Notification.requestPermission().then(function (permission) {
-                    if (permission === "granted") {
-                        new Notification("InstaTool", { 
-                            body: "✅ Notifications enabled! You will be alerted when downloads finish.",
-                            icon: "[https://cdn-icons-png.flaticon.com/512/190/190411.png](https://cdn-icons-png.flaticon.com/512/190/190411.png)"
+            Notification.requestPermission().then(function (permission) {
+                if (permission === "granted") {
+                    navigator.serviceWorker.ready.then(function(registration) {
+                        registration.showNotification('InstaTool', {
+                            body: 'Notifications Enabled!',
+                            icon: 'https://cdn-icons-png.flaticon.com/512/190/190411.png'
                         });
-                    }
-                });
-            }
-        }
-        
-        // Listen for specific message to trigger notification from Python
-        window.addEventListener("message", function(event) {
-            if (event.data.type === "show_notification") {
-                if (Notification.permission === "granted") {
-                    new Notification(event.data.title, {
-                        body: event.data.body,
-                        icon: "[https://cdn-icons-png.flaticon.com/512/190/190411.png](https://cdn-icons-png.flaticon.com/512/190/190411.png)"
                     });
+                    // Fallback for non-service worker contexts
+                    new Notification("InstaTool", { 
+                        body: "✅ Notifications enabled!",
+                        icon: "https://cdn-icons-png.flaticon.com/512/190/190411.png"
+                    });
+                } else {
+                    alert("Permission was " + permission);
                 }
-            }
-        });
+            });
+        }
     </script>
     
-    <div style="background-color: #262730; padding: 10px; border-radius: 5px; border: 1px solid #464b59; margin-bottom: 20px;">
-        <p style="margin: 0 0 10px 0; color: white; font-size: 14px;"><strong>Enable Desktop Alerts:</strong></p>
+    <div style="margin-bottom: 10px;">
         <button onclick="requestPermission()" style="
             background-color: #4CAF50; 
             border: none; 
             color: white; 
-            padding: 8px 16px; 
+            padding: 10px 20px; 
             text-align: center; 
             text-decoration: none; 
             display: inline-block; 
             font-size: 14px; 
-            border-radius: 4px; 
+            border-radius: 5px; 
             cursor: pointer;
-            width: 100%;">
-            🔔 Allow Notifications
+            width: 100%;
+            font-weight: bold;">
+            🔔 Enable Desktop Alerts
         </button>
     </div>
     """
-    components.html(js_code, height=100)
+    components.html(js_code, height=60)
 
 def trigger_js_notification(title, body):
-    """Triggers the pre-loaded JS listener to show a notification."""
-    js_trigger = f"""
+    """Directly triggers a notification via JS injection."""
+    js_code = f"""
     <script>
-        window.parent.postMessage({{
-            type: "show_notification",
-            title: "{title}",
-            body: "{body}"
-        }}, "*");
+        if (Notification.permission === "granted") {{
+            new Notification("{title}", {{
+                body: "{body}",
+                icon: "https://cdn-icons-png.flaticon.com/512/190/190411.png"
+            }});
+        }} else {{
+            console.log("Notification permission not granted.");
+        }}
     </script>
     """
-    components.html(js_trigger, height=0, width=0)
+    components.html(js_code, height=0, width=0)
 
 def convert_to_quicktime_mp4(input_path, custom_name=None):
     path_obj = Path(input_path)
@@ -171,20 +162,21 @@ def download_single_video(url, output_dir, cookies_path, custom_name=None):
 
 # --- Main UI ---
 def main():
-    st.title("📦 InstaTool: Batch & Rename")
-    st.markdown("Download Reels. **Auto-Upscale to 1080p.** Mac Ready.")
+    st.title("📦 InstaTool")
+    st.markdown("Download Reels. **Auto-Upscale to 1080p.** Edit Ready.")
 
     # --- Sidebar ---
     with st.sidebar:
+        st.header("🔔 Settings")
+        # 1. Setup Notifications UI
+        setup_notifications()
+        st.markdown("---")
+        
         st.header("🔐 Authentication")
         st.info("Upload `cookies.txt` to bypass Instagram login.")
         uploaded_cookie = st.file_uploader("Upload cookies.txt", type=["txt"])
         
         cookie_path = get_cookies_path(uploaded_cookie)
-        
-        st.markdown("---")
-        # New Notification Setup UI
-        setup_notifications()
         
         if not cookie_path:
             st.warning("⚠️ Please upload cookies.txt to start.")
@@ -197,7 +189,7 @@ def main():
     raw_input = st.text_area(
         "Input Area", 
         height=200, 
-        placeholder="[https://www.instagram.com/reel/C-abc123/](https://www.instagram.com/reel/C-abc123/) - My Viral Video\n[https://www.instagram.com/reel/D-xyz987/](https://www.instagram.com/reel/D-xyz987/)"
+        placeholder="https://www.instagram.com/reel/C-abc123/ - My Viral Video\nhttps://www.instagram.com/reel/D-xyz987/"
     )
     
     if st.button("Download All", type="primary"):
@@ -236,10 +228,10 @@ def main():
             
             # --- Success Logic ---
             if valid_files:
-                # 1. Play Sound
+                # 1. Play Sound (Native Player)
                 play_success_sound()
                 
-                # 2. Trigger Desktop Notification
+                # 2. Trigger Notification (Direct Injection)
                 trigger_js_notification(
                     "InstaTool Batch Complete", 
                     f"{len(valid_files)} videos are ready for download!"
