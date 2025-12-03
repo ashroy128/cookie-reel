@@ -105,8 +105,6 @@ def download_single_video(url, output_dir, cookies_path, custom_name=None):
 
     # Universal Options
     ydl_opts = {
-        # Allow ANY format initially (webm, mkv, etc.) because we convert it later anyway.
-        # This is more reliable for YouTube/TikTok than forcing mp4 immediately.
         'format': 'bestvideo+bestaudio/best', 
         'outtmpl': str(Path(output_dir) / '%(id)s.%(ext)s'), 
         'noplaylist': True,
@@ -118,23 +116,43 @@ def download_single_video(url, output_dir, cookies_path, custom_name=None):
     
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            # Extract info
             info = ydl.extract_info(url, download=True)
             filename = ydl.prepare_filename(info)
             
-            # Verify file existence (handling extensions like .webm or .mkv)
+            # Verify file existence
             if not os.path.exists(filename):
                 video_id = info.get('id')
-                # Search for any file with this ID (ignoring extension)
                 files = list(Path(output_dir).glob(f"*{video_id}*"))
                 if files: filename = str(files[0])
-                else: return None
+                else: return None, "File not found after download"
             
             # Pass to converter
-            return convert_to_quicktime_mp4(filename, custom_name)
+            converted_path = convert_to_quicktime_mp4(filename, custom_name)
+            return converted_path, None # Success, No Error
+
     except Exception as e:
-        print(f"Download Error ({domain}): {e}")
-        return None
+        # --- YouTube Specific Fallback ---
+        # If 'bestvideo+bestaudio' fails (common on servers), try 'best' (single file)
+        if domain == "YouTube":
+            try:
+                print(f"Retrying YouTube with fallback format...")
+                ydl_opts['format'] = 'best'
+                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                    info = ydl.extract_info(url, download=True)
+                    filename = ydl.prepare_filename(info)
+                    
+                    if not os.path.exists(filename):
+                        video_id = info.get('id')
+                        files = list(Path(output_dir).glob(f"*{video_id}*"))
+                        if files: filename = str(files[0])
+                        else: return None, "Fallback failed: File not found"
+                    
+                    converted_path = convert_to_quicktime_mp4(filename, custom_name)
+                    return converted_path, None
+            except Exception as e2:
+                return None, f"YouTube Fallback Failed: {e2}"
+
+        return None, str(e)
 
 # --- Main UI ---
 def main():
@@ -185,13 +203,14 @@ def main():
 
                 progress_bar.progress((i) / len(lines), text=f"Downloading: {custom_name if custom_name else url}...")
                 
-                f_path = download_single_video(url, batch_dir, cookie_path, custom_name)
+                # Unpack tuple (path, error)
+                f_path, error_msg = download_single_video(url, batch_dir, cookie_path, custom_name)
                 
                 if f_path and os.path.exists(f_path):
                     valid_files.append(f_path)
                     st.toast(f"✅ Ready: {os.path.basename(f_path)}", icon="✨")
                 else:
-                    failed_lines.append(url)
+                    failed_lines.append((url, error_msg))
                 
                 progress_bar.progress((i + 1) / len(lines), text=f"Finished {i+1}/{len(lines)}")
             
@@ -229,9 +248,11 @@ def main():
             
             if failed_lines:
                 st.error(f"Failed to download {len(failed_lines)} videos.")
-                with st.expander("See Failed Links"):
-                    for fail in failed_lines:
-                        st.write(fail)
+                with st.expander("See Failed Links & Errors"):
+                    for url, err in failed_lines:
+                        st.markdown(f"**Link:** `{url}`")
+                        st.caption(f"Error: {err}")
+                        st.divider()
 
 if __name__ == "__main__":
     main()
