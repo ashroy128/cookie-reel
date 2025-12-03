@@ -6,6 +6,7 @@ import zipfile
 import tempfile
 import ffmpeg
 import re
+import time
 from pathlib import Path
 
 # --- Page Config ---
@@ -33,8 +34,9 @@ def sanitize_filename(name):
 
 def convert_to_quicktime_mp4(input_path, custom_name=None):
     """
-    Converts to H.264/AAC for Mac compatibility.
-    Renames the file if a custom name is provided.
+    1. Converts to H.264/AAC for Mac compatibility.
+    2. Upscales to 1080p width using Lanczos algorithm.
+    3. Renames the file if a custom name is provided.
     """
     path_obj = Path(input_path)
     if not path_obj.exists(): return None
@@ -49,14 +51,17 @@ def convert_to_quicktime_mp4(input_path, custom_name=None):
     output_path = path_obj.parent / output_filename
 
     try:
-        # Run FFmpeg conversion
+        # Run FFmpeg conversion with Upscaling
+        # scale=1080:-2 means: Force width to 1080px, calculate height automatically to keep aspect ratio.
+        # flags=lanczos means: Use high-quality scaling algorithm (sharper than default).
         stream = ffmpeg.input(str(input_path))
         stream = ffmpeg.output(
             stream, 
             str(output_path), 
             vcodec='libx264', 
             acodec='aac', 
-            pix_fmt='yuv420p', 
+            pix_fmt='yuv420p',
+            vf='scale=1080:-2:flags=lanczos', # <--- THE UPSCALING MAGIC
             strict='experimental',
             loglevel='error'
         )
@@ -73,7 +78,6 @@ def convert_to_quicktime_mp4(input_path, custom_name=None):
 def download_single_video(url, output_dir, cookies_path, custom_name=None):
     ydl_opts = {
         'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
-        # Temporarily use ID to avoid path length issues during download
         'outtmpl': str(Path(output_dir) / '%(id)s.%(ext)s'), 
         'noplaylist': True,
         'quiet': True,
@@ -94,7 +98,7 @@ def download_single_video(url, output_dir, cookies_path, custom_name=None):
                 if files: filename = str(files[0])
                 else: return None
 
-            # Convert and Rename
+            # Convert, Upscale and Rename
             return convert_to_quicktime_mp4(filename, custom_name)
             
     except Exception as e:
@@ -103,7 +107,7 @@ def download_single_video(url, output_dir, cookies_path, custom_name=None):
 # --- Main UI ---
 def main():
     st.title("📦 InstaTool: Batch & Rename")
-    st.markdown("Download Reels in bulk. Rename them automatically. Convert for Mac.")
+    st.markdown("Download Reels. **Auto-Upscale to 1080p.** Mac Ready.")
 
     # --- Sidebar: Cookies ---
     with st.sidebar:
@@ -141,7 +145,6 @@ def main():
             for i, line in enumerate(lines):
                 # 1. Parse Link and Name
                 if " - " in line:
-                    # Split by the first occurrence of " - "
                     parts = line.split(" - ", 1)
                     url = parts[0].strip()
                     custom_name = parts[1].strip()
@@ -156,6 +159,8 @@ def main():
                 
                 if f_path and os.path.exists(f_path):
                     valid_files.append(f_path)
+                    # --- NOTIFICATION FEATURE ---
+                    st.toast(f"✅ Ready: {os.path.basename(f_path)}", icon="✨")
                 else:
                     failed_lines.append(url)
                 
@@ -165,15 +170,16 @@ def main():
             
             # 3. Zip and Serve
             if valid_files:
+                # --- CELEBRATION FEATURE ---
+                st.balloons() 
+                st.success(f"🎉 All Done! {len(valid_files)} videos upscaled & ready.")
+                
                 zip_name = "reels_download.zip"
                 zip_path = os.path.join(tempfile.gettempdir(), zip_name)
                 
                 with zipfile.ZipFile(zip_path, 'w') as zipf:
                     for file_path in valid_files:
-                        # Add to zip with clean filename
                         zipf.write(file_path, arcname=os.path.basename(file_path))
-                
-                st.success(f"✅ Ready! {len(valid_files)} videos downloaded.")
                 
                 with open(zip_path, "rb") as f:
                     st.download_button(
