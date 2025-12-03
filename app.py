@@ -96,11 +96,13 @@ def convert_to_quicktime_mp4(input_path, custom_name=None):
         return str(input_path)
 
 def download_single_video(url, output_dir, cookies_path, custom_name=None):
-    # Sanitize URL (remove tracking params)
-    if "?" in url:
-        url = url.split("?")[0]
-
-    # Determine domain for specific handling if needed
+    # Smart URL Sanitization
+    # Only strip query params if it is NOT a standard YouTube watch link (which needs ?v=...)
+    if "youtube.com/watch" not in url and "youtu.be/" not in url:
+        if "?" in url:
+            url = url.split("?")[0]
+    
+    # Determine domain for specific handling
     domain = "Generic"
     if "instagram" in url: domain = "Instagram"
     elif "tiktok" in url: domain = "TikTok"
@@ -145,8 +147,8 @@ def download_single_video(url, output_dir, cookies_path, custom_name=None):
                 if 'cookiefile' in ydl_opts:
                     del ydl_opts['cookiefile']
                 
-                # 'best[ext=mp4]' selects the best single MP4 file 
-                ydl_opts['format'] = 'best[ext=mp4]/best'
+                # 'best' selects the best single file containing both video+audio
+                ydl_opts['format'] = 'best' 
                 
                 with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                     info = ydl.extract_info(url, download=True)
