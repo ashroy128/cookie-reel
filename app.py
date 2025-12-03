@@ -156,18 +156,7 @@ def main():
             
             # --- Success Logic ---
             if valid_files:
-                # 1. Play Sound (Native Player)
-                play_success_sound()
                 
-                # 2. Trigger Notification (Direct Injection)
-                trigger_js_notification(
-                    "InstaTool Batch Complete", 
-                    f"{len(valid_files)} videos are ready for download!"
-                )
-                
-                # 3. Show Balloons
-                st.balloons()
-                st.success(f"🎉 All Done! {len(valid_files)} videos upscaled & ready.")
                 
                 zip_name = "reels_download.zip"
                 zip_path = os.path.join(tempfile.gettempdir(), zip_name)
