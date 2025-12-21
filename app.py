@@ -12,7 +12,7 @@ import whisper
 from pathlib import Path
 
 # --- Page Config ---
-st.set_page_config(page_title="Insta Tool: 1080p Batch + Transcriber", page_icon="📦", layout="wide")
+st.set_page_config(page_title="Insta Tool", page_icon="📦", layout="wide")
 
 # --- Helper Functions ---
 
