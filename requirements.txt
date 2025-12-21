@@ -2,3 +2,4 @@ streamlit
 yt-dlp
 ffmpeg-python
 numpy
+openai-whisper
