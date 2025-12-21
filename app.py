@@ -12,7 +12,7 @@ import whisper
 from pathlib import Path
 
 # --- Page Config ---
-st.set_page_config(page_title="Insta Tool: 1080p Batch + Transcriber", page_icon="📦", layout="wide")
+st.set_page_config(page_title="Insta Tool", page_icon="📸", layout="wide")
 
 # --- Helper Functions ---
 
@@ -41,10 +41,9 @@ def sanitize_filename(name):
 
 def process_media(input_path, custom_name=None, index=0, mode="both"):
     """
-    1. Upscales/Converts Videos to 1080p MP4.
-    2. Transcribes Videos to .txt.
-    3. Renames Images.
-    mode: 'video_only', 'transcript_only', 'both'
+    1. Upscales Videos to 1080p MP4.
+    2. Transcribes Videos to .txt (if requested).
+    3. Renames Images (no conversion).
     Returns: (media_path, transcript_path)
     """
     path_obj = Path(input_path)
@@ -73,7 +72,7 @@ def process_media(input_path, custom_name=None, index=0, mode="both"):
         
         output_filename = f"{safe_name}{suffix}"
     else:
-        if is_video: output_filename = f"{path_obj.stem}_mac.mp4"
+        if is_video: output_filename = f"{path_obj.stem}_1080p.mp4"
         elif is_image: output_filename = f"{path_obj.stem}.jpg"
         else: output_filename = path_obj.name
 
@@ -83,10 +82,7 @@ def process_media(input_path, custom_name=None, index=0, mode="both"):
     # --- VIDEO PROCESSING ---
     if is_video:
         try:
-            # 1. Convert/Upscale (Always needed for accurate transcription source or video output)
-            # Optimization: If mode is transcript_only, we might skip full upscale? 
-            # But converting to mp4/wav is usually safer for whisper. Let's keep standard conversion for stability.
-            
+            # 1. Convert/Upscale
             stream = ffmpeg.input(str(input_path))
             stream = ffmpeg.output(
                 stream, 
@@ -103,7 +99,7 @@ def process_media(input_path, custom_name=None, index=0, mode="both"):
             if output_path.exists():
                 if str(input_path) != str(output_path): os.remove(input_path)
                 
-                # 2. Transcribe
+                # 2. Transcribe (Conditional)
                 if mode in ["transcript_only", "both"]:
                     try:
                         model = load_whisper()
@@ -119,11 +115,7 @@ def process_media(input_path, custom_name=None, index=0, mode="both"):
                     except Exception as e:
                         print(f"Transcription failed: {e}")
 
-                # If user only wanted transcript, we shouldn't return the video path (so it's not zipped)
-                # But we still need the file on disk to transcribe it. 
-                # We can return None for media_path if mode is transcript_only
                 final_media_path = str(output_path) if mode in ["video_only", "both"] else None
-                
                 return final_media_path, transcript_path
 
         except Exception as e:
@@ -133,7 +125,7 @@ def process_media(input_path, custom_name=None, index=0, mode="both"):
     # --- IMAGE PROCESSING ---
     elif is_image:
         if mode == "transcript_only":
-            return None, None # Can't transcribe images
+            return None, None 
 
         try:
             stream = ffmpeg.input(str(input_path))
@@ -152,26 +144,19 @@ def process_media(input_path, custom_name=None, index=0, mode="both"):
 def download_content(url, output_dir, cookies_path, custom_name=None, mode="both"):
     existing_files = set(os.listdir(output_dir))
 
-    # Smart URL Cleaning
-    if "youtube.com/watch" not in url and "youtu.be/" not in url:
-        if "?" in url: url = url.split("?")[0]
-
-    # Cookie Logic
-    active_cookies = cookies_path if "instagram.com" in url else None
+    # Standardize URL (Strip query params for Instagram)
+    if "?" in url: url = url.split("?")[0]
 
     ydl_opts = {
         'outtmpl': str(Path(output_dir) / '%(id)s.%(ext)s'),
-        'noplaylist': False,
+        'noplaylist': False, # Allows downloading carousels
         'quiet': True,
         'no_warnings': True,
-        'cookiefile': active_cookies,
+        'cookiefile': cookies_path,
         'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
         'ignoreerrors': True,
         'format': 'bestvideo+bestaudio/best', 
     }
-
-    if "youtube.com" in url or "youtu.be" in url:
-        ydl_opts['format'] = 'best[ext=mp4]/best'
 
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -201,60 +186,69 @@ def download_content(url, output_dir, cookies_path, custom_name=None, mode="both
 
 # --- Main UI ---
 def main():
-    st.title("📦 Insta Tool")
+    st.title("Insta Tool - Instagram 1080p Batch Downloader + Transcriber")
     st.markdown("Download upscaled 1080p edit ready videos and transcript from Instagram")
 
     with st.sidebar:
         st.header("🔐 Authentication")
-        st.info("Upload cookies if you face login issues (Required for Instagram).")
-        uploaded_cookie = st.file_uploader("Upload cookies.txt", type=["txt"])
+        st.info("Upload cookies if you face login issues.")
+        uploaded_cookie = st.file_uploader("Upload cookies.txt", type=["txt"], key="cookie_uploader")
         cookie_path = get_cookies_path(uploaded_cookie)
         if not cookie_path:
             st.warning("⚠️ No cookies uploaded. Instagram links will likely fail.")
 
+    # --- Session State Initialization ---
+    if 'processed_items' not in st.session_state:
+        st.session_state.processed_items = []
+    if 'failed_lines' not in st.session_state:
+        st.session_state.failed_lines = []
+    if 'batch_dir' not in st.session_state:
+        st.session_state.batch_dir = None
+
+    # --- INPUT SECTION ---
+    # Only show input if we haven't processed anything yet, OR if we want to add more?
+    # Usually better to hide it to avoid confusion, or keep it at top.
+    # Let's keep it visible but disable buttons if processing to prevent double-clicks.
+    
     st.markdown("### Paste URLs below")
     st.caption("Format: `Link` OR `Link - Custom Filename`")
     
     raw_input = st.text_area(
         "Input Area", 
-        height=200, 
-        placeholder="https://www.instagram.com/reel/C-abc123/ - Insta Video\nhttps://www.tiktok.com/@user/video/12345 - TikTok Video"
+        height=150, 
+        placeholder="https://www.instagram.com/reel/C-abc123/ - My Reel\nhttps://www.instagram.com/p/D-xyz987/ - Carousel"
     )
     
-    # --- Triple Button Logic ---
-    col1, col2, col3 = st.columns(3)
-    
+    col1, col2 = st.columns(2)
     start_processing = False
-    process_mode = "both" # Default
+    process_mode = "both"
     
     with col1:
-        if st.button("Download Video Only", type="primary", use_container_width=True):
+        if st.button("Download All", type="primary", use_container_width=True):
             start_processing = True
             process_mode = "video_only"
             
     with col2:
-        if st.button("Download Transcript Only", use_container_width=True):
-            start_processing = True
-            process_mode = "transcript_only"
-
-    with col3:
-        if st.button("Download Video + Transcript", use_container_width=True):
+        if st.button("Download & Transcribe All", use_container_width=True):
             start_processing = True
             process_mode = "both"
     
+    # --- PROCESSING LOGIC ---
     if start_processing:
+        # Clear previous results if any
+        st.session_state.processed_items = []
+        st.session_state.failed_lines = []
+        if st.session_state.batch_dir:
+             cleanup_temp([st.session_state.batch_dir])
+        
+        st.session_state.batch_dir = tempfile.mkdtemp()
         lines = [line.strip() for line in raw_input.splitlines() if line.strip()]
         
         if not lines:
             st.warning("No links provided.")
         else:
             progress_bar = st.progress(0, text="Starting...")
-            batch_dir = tempfile.mkdtemp()
             
-            all_media = []
-            all_transcripts = []
-            failed_lines = []
-
             for i, line in enumerate(lines):
                 if " - " in line:
                     parts = line.split(" - ", 1)
@@ -264,84 +258,101 @@ def main():
                     url = line
                     custom_name = None
 
-                if i > 0 and ("instagram" in url or "tiktok" in url): 
-                    time.sleep(5) # Delay for rate limits
+                if i > 0: time.sleep(5) 
 
                 progress_bar.progress((i) / len(lines), text=f"Processing: {custom_name if custom_name else url}...")
                 
-                # Retrieve both lists
-                m_paths, t_paths, error_msg = download_content(url, batch_dir, cookie_path, custom_name, process_mode)
+                m_paths, t_paths, error_msg = download_content(url, st.session_state.batch_dir, cookie_path, custom_name, process_mode)
                 
-                if m_paths:
-                    all_media.extend(m_paths)
-                    for p in m_paths:
-                        st.toast(f"✅ Downloaded: {os.path.basename(p)}", icon="📹")
-                
-                if t_paths:
-                    all_transcripts.extend(t_paths)
-                    st.toast(f"✅ Transcribed: {len(t_paths)} files", icon="📝")
-
-                if not m_paths and not t_paths:
-                    failed_lines.append((url, error_msg))
+                if m_paths or t_paths:
+                    # Store result in session state
+                    # If multiple files returned (carousel), store each one
+                    # We store a dict for each "item" (video + transcript pair)
+                    # Since m_paths and t_paths lists correspond, we zip them if possible, or handle mismatched lengths
+                    
+                    # Usually 1 video -> 1 transcript.
+                    # Carousel -> 3 videos -> 3 transcripts.
+                    # We will treat them as individual items for display
+                    
+                    # Handle separate lists safely
+                    count = max(len(m_paths), len(t_paths))
+                    for idx in range(count):
+                        item = {
+                            "media": m_paths[idx] if idx < len(m_paths) else None,
+                            "transcript": t_paths[idx] if idx < len(t_paths) else None,
+                            "name": os.path.basename(m_paths[idx]) if idx < len(m_paths) and m_paths[idx] else f"Item {idx+1}"
+                        }
+                        st.session_state.processed_items.append(item)
+                else:
+                    st.session_state.failed_lines.append((url, error_msg))
                 
                 progress_bar.progress((i + 1) / len(lines), text=f"Finished {i+1}/{len(lines)}")
             
             progress_bar.empty()
-            
-            # --- Success Logic ---
-            if all_media or all_transcripts:
-                st.balloons()
-                msg = "🎉 Success!"
-                if all_media: msg += f" Processed {len(all_media)} media files."
-                if all_transcripts: msg += f" Generated {len(all_transcripts)} transcripts."
-                st.success(msg)
-                
-                download_col1, download_col2 = st.columns(2)
-                
-                # 1. Video/Image ZIP
-                if all_media:
-                    media_zip_name = "universal_media.zip"
-                    media_zip_path = os.path.join(tempfile.gettempdir(), media_zip_name)
-                    with zipfile.ZipFile(media_zip_path, 'w') as zipf:
-                        for f in all_media:
-                            zipf.write(f, arcname=os.path.basename(f))
-                    
-                    with download_col1:
-                        with open(media_zip_path, "rb") as f:
-                            st.download_button(
-                                label="📦 Download Media (ZIP)",
-                                data=f,
-                                file_name=media_zip_name,
-                                mime="application/zip",
-                                type="primary",
-                                use_container_width=True
-                            )
+            st.rerun() # Force reload to show results immediately
 
-                # 2. Transcript ZIP (Only show if transcripts exist)
-                if all_transcripts:
-                    trans_zip_name = "transcripts.zip"
-                    trans_zip_path = os.path.join(tempfile.gettempdir(), trans_zip_name)
-                    with zipfile.ZipFile(trans_zip_path, 'w') as zipf:
-                        for f in all_transcripts:
-                            zipf.write(f, arcname=os.path.basename(f))
-                    
-                    with download_col2:
-                        with open(trans_zip_path, "rb") as f:
+    # --- RESULTS DISPLAY ---
+    if st.session_state.processed_items:
+        st.divider()
+        st.subheader("🎉 Ready for Download")
+        
+        # Display "Start Fresh" at the top of results for easy access
+        if st.button("🔄 Start Fresh Session", type="secondary", use_container_width=True):
+            if st.session_state.batch_dir:
+                cleanup_temp([st.session_state.batch_dir])
+            st.session_state.processed_items = []
+            st.session_state.failed_lines = []
+            st.rerun()
+
+        st.write(f"Processed {len(st.session_state.processed_items)} items.")
+        
+        for idx, item in enumerate(st.session_state.processed_items):
+            with st.container():
+                st.markdown(f"**{idx + 1}. {item['name']}**")
+                
+                cols = st.columns([2, 1, 1])
+                
+                # Column 1: Preview
+                with cols[0]:
+                    if item['media']:
+                        ext = Path(item['media']).suffix.lower()
+                        if ext in ['.jpg', '.jpeg', '.png']:
+                            st.image(item['media'], width=300)
+                        else:
+                            st.video(item['media'])
+                
+                # Column 2: Media Download
+                with cols[1]:
+                    if item['media'] and os.path.exists(item['media']):
+                        with open(item['media'], "rb") as f:
                             st.download_button(
-                                label="📄 Download Transcripts (ZIP)",
+                                label="Download Media",
                                 data=f,
-                                file_name=trans_zip_name,
-                                mime="application/zip",
-                                use_container_width=True
+                                file_name=os.path.basename(item['media']),
+                                mime="application/octet-stream",
+                                key=f"dl_media_{idx}"
                             )
-            
-            if failed_lines:
-                st.error(f"Failed to process {len(failed_lines)} items.")
-                with st.expander("See Failed Links"):
-                    for url, err in failed_lines:
-                        st.markdown(f"**Link:** `{url}`")
-                        st.caption(f"Error: {err}")
-                        st.divider()
+                
+                # Column 3: Transcript Download
+                with cols[2]:
+                    if item['transcript'] and os.path.exists(item['transcript']):
+                        with open(item['transcript'], "rb") as f:
+                            st.download_button(
+                                label="Download Transcript",
+                                data=f,
+                                file_name=os.path.basename(item['transcript']),
+                                mime="text/plain",
+                                key=f"dl_trans_{idx}"
+                            )
+                st.divider()
+
+    # --- FAILED ITEMS ---
+    if st.session_state.failed_lines:
+        st.error(f"Failed to process {len(st.session_state.failed_lines)} items.")
+        with st.expander("See Failed Links"):
+            for url, err in st.session_state.failed_lines:
+                st.markdown(f"**Link:** `{url}`")
+                st.caption(f"Error: {err}")
 
 if __name__ == "__main__":
     main()
