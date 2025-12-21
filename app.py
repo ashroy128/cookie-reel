@@ -12,7 +12,7 @@ import whisper
 from pathlib import Path
 
 # --- Page Config ---
-st.set_page_config(page_title="Insta Tool", page_icon="📦", layout="wide")
+st.set_page_config(page_title="Insta Tool: 1080p Batch + Transcriber", page_icon="📦", layout="wide")
 
 # --- Helper Functions ---
 
@@ -201,8 +201,8 @@ def download_content(url, output_dir, cookies_path, custom_name=None, mode="both
 
 # --- Main UI ---
 def main():
-    st.title("📦 Insta Tool - Instagram 1080p Batch Downloader + Transcriber")
-    st.markdown("Supports **Instagram, TikTok, YouTube & Pinterest**. Auto-Upscales to 1080p.")
+    st.title("📦 Insta Tool")
+    st.markdown("Download upscaled 1080p edit ready videos and transcript from Instagram")
 
     with st.sidebar:
         st.header("🔐 Authentication")
