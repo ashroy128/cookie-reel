@@ -8,7 +8,7 @@ import ffmpeg
 import re
 import time
 import mimetypes
-import openai-whisper as whisper
+import whisper
 from pathlib import Path
 
 # --- Page Config ---
