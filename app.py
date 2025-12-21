@@ -186,16 +186,16 @@ def download_content(url, output_dir, cookies_path, custom_name=None, mode="both
 
 # --- Main UI ---
 def main():
-    st.title("Insta Tool - Instagram 1080p Batch Downloader + Transcriber")
-    st.markdown("Download upscaled 1080p edit ready videos and transcript from Instagram")
+    st.title("Insta Tool")
+    st.markdown("Instagram 1080p Batch Downloader + Transcriber")
 
     with st.sidebar:
         st.header("🔐 Authentication")
-        st.info("Upload cookies if you face login issues.")
+        st.info("Upload cookies")
         uploaded_cookie = st.file_uploader("Upload cookies.txt", type=["txt"], key="cookie_uploader")
         cookie_path = get_cookies_path(uploaded_cookie)
         if not cookie_path:
-            st.warning("⚠️ No cookies uploaded. Instagram links will likely fail.")
+            st.warning("⚠️ No cookies uploaded.")
 
     # --- Session State Initialization ---
     if 'processed_items' not in st.session_state:
