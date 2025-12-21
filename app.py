@@ -12,7 +12,7 @@ import whisper
 from pathlib import Path
 
 # --- Page Config ---
-st.set_page_config(page_title="UniTool: All-in-One Downloader", page_icon="📦", layout="wide")
+st.set_page_config(page_title="Insta Tool: 1080p Batch + Transcriber", page_icon="📦", layout="wide")
 
 # --- Helper Functions ---
 
@@ -39,10 +39,10 @@ def sanitize_filename(name):
     cleaned = re.sub(r'[\\/*?:"<>|]', "", name).strip()
     return cleaned if cleaned else "media_file"
 
-def process_media(input_path, custom_name=None, index=0):
+def process_media(input_path, custom_name=None, index=0, transcribe=False):
     """
     1. Upscales/Converts Videos to 1080p MP4.
-    2. Transcribes Videos to .txt.
+    2. Transcribes Videos to .txt (if enabled).
     3. Renames Images.
     Returns: (media_path, transcript_path)
     """
@@ -99,20 +99,21 @@ def process_media(input_path, custom_name=None, index=0):
             if output_path.exists():
                 if str(input_path) != str(output_path): os.remove(input_path)
                 
-                # 2. Transcribe (Auto)
-                try:
-                    model = load_whisper()
-                    result = model.transcribe(str(output_path))
-                    
-                    txt_filename = output_path.stem + ".txt"
-                    txt_full_path = output_path.parent / txt_filename
-                    
-                    with open(txt_full_path, "w", encoding="utf-8") as f:
-                        f.write(result["text"].strip())
-                    
-                    transcript_path = str(txt_full_path)
-                except Exception as e:
-                    print(f"Transcription failed: {e}")
+                # 2. Transcribe (Conditional)
+                if transcribe:
+                    try:
+                        model = load_whisper()
+                        result = model.transcribe(str(output_path))
+                        
+                        txt_filename = output_path.stem + ".txt"
+                        txt_full_path = output_path.parent / txt_filename
+                        
+                        with open(txt_full_path, "w", encoding="utf-8") as f:
+                            f.write(result["text"].strip())
+                        
+                        transcript_path = str(txt_full_path)
+                    except Exception as e:
+                        print(f"Transcription failed: {e}")
 
                 return str(output_path), transcript_path
 
@@ -136,7 +137,7 @@ def process_media(input_path, custom_name=None, index=0):
 
     return str(input_path), None
 
-def download_content(url, output_dir, cookies_path, custom_name=None):
+def download_content(url, output_dir, cookies_path, custom_name=None, transcribe=False):
     existing_files = set(os.listdir(output_dir))
 
     # Smart URL Cleaning
@@ -179,7 +180,7 @@ def download_content(url, output_dir, cookies_path, custom_name=None):
 
     for i, f in enumerate(new_files):
         full_path = os.path.join(output_dir, f)
-        media_p, trans_p = process_media(full_path, custom_name, i)
+        media_p, trans_p = process_media(full_path, custom_name, i, transcribe)
         
         if media_p: processed_media_files.append(media_p)
         if trans_p: processed_transcript_files.append(trans_p)
@@ -188,8 +189,8 @@ def download_content(url, output_dir, cookies_path, custom_name=None):
 
 # --- Main UI ---
 def main():
-    st.title("📦 UniTool: All-in-One Downloader")
-    st.markdown("Supports **Instagram, TikTok, YouTube & Pinterest**. Auto-Upscales to 1080p + Auto-Transcribes.")
+    st.title("📦 Insta Tool - Instagram 1080p Batch Downloader + Transcriber")
+    st.markdown("Supports **Instagram, TikTok, YouTube & Pinterest**. Auto-Upscales to 1080p.")
 
     with st.sidebar:
         st.header("🔐 Authentication")
@@ -208,7 +209,23 @@ def main():
         placeholder="https://www.instagram.com/reel/C-abc123/ - Insta Video\nhttps://www.tiktok.com/@user/video/12345 - TikTok Video"
     )
     
-    if st.button("Download & Transcribe All", type="primary"):
+    # --- Dual Button Logic ---
+    col1, col2 = st.columns(2)
+    
+    start_download = False
+    enable_transcription = False
+    
+    with col1:
+        if st.button("Download All", type="primary", use_container_width=True):
+            start_download = True
+            enable_transcription = False
+            
+    with col2:
+        if st.button("Download & Transcribe All", use_container_width=True):
+            start_download = True
+            enable_transcription = True
+    
+    if start_download:
         lines = [line.strip() for line in raw_input.splitlines() if line.strip()]
         
         if not lines:
@@ -236,7 +253,7 @@ def main():
                 progress_bar.progress((i) / len(lines), text=f"Processing: {custom_name if custom_name else url}...")
                 
                 # Retrieve both lists
-                m_paths, t_paths, error_msg = download_content(url, batch_dir, cookie_path, custom_name)
+                m_paths, t_paths, error_msg = download_content(url, batch_dir, cookie_path, custom_name, enable_transcription)
                 
                 if m_paths:
                     all_media.extend(m_paths)
@@ -257,9 +274,12 @@ def main():
             # --- Success Logic ---
             if all_media:
                 st.balloons()
-                st.success(f"🎉 Success! Processed {len(all_media)} videos/images and generated {len(all_transcripts)} transcripts.")
+                msg = f"🎉 Success! Processed {len(all_media)} media files."
+                if enable_transcription:
+                    msg += f" Generated {len(all_transcripts)} transcripts."
+                st.success(msg)
                 
-                col1, col2 = st.columns(2)
+                download_col1, download_col2 = st.columns(2)
                 
                 # 1. Video/Image ZIP
                 media_zip_name = "universal_media.zip"
@@ -268,17 +288,18 @@ def main():
                     for f in all_media:
                         zipf.write(f, arcname=os.path.basename(f))
                 
-                with col1:
+                with download_col1:
                     with open(media_zip_path, "rb") as f:
                         st.download_button(
                             label="📦 Download Media (ZIP)",
                             data=f,
                             file_name=media_zip_name,
                             mime="application/zip",
-                            type="primary"
+                            type="primary",
+                            use_container_width=True
                         )
 
-                # 2. Transcript ZIP
+                # 2. Transcript ZIP (Only show if transcripts exist)
                 if all_transcripts:
                     trans_zip_name = "transcripts.zip"
                     trans_zip_path = os.path.join(tempfile.gettempdir(), trans_zip_name)
@@ -286,13 +307,14 @@ def main():
                         for f in all_transcripts:
                             zipf.write(f, arcname=os.path.basename(f))
                     
-                    with col2:
+                    with download_col2:
                         with open(trans_zip_path, "rb") as f:
                             st.download_button(
                                 label="📄 Download Transcripts (ZIP)",
                                 data=f,
                                 file_name=trans_zip_name,
-                                mime="application/zip"
+                                mime="application/zip",
+                                use_container_width=True
                             )
             
             if failed_lines:
