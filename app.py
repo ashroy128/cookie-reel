@@ -1,5 +1,4 @@
 import streamlit as st
-import streamlit.components.v1 as components
 import yt_dlp
 import os
 import shutil
@@ -8,12 +7,18 @@ import tempfile
 import ffmpeg
 import re
 import time
+import mimetypes
+import whisper
 from pathlib import Path
 
 # --- Page Config ---
 st.set_page_config(page_title="UniTool: All-in-One Downloader", page_icon="📦", layout="wide")
 
 # --- Helper Functions ---
+
+@st.cache_resource
+def load_whisper():
+    return whisper.load_model("base")
 
 def cleanup_temp(paths):
     for p in paths:
@@ -31,170 +36,179 @@ def get_cookies_path(uploaded_file):
 
 def sanitize_filename(name):
     """Removes illegal characters from filenames."""
-    return re.sub(r'[\\/*?:"<>|]', "", name).strip()
+    cleaned = re.sub(r'[\\/*?:"<>|]', "", name).strip()
+    return cleaned if cleaned else "media_file"
 
-def play_success_sound():
-    """Plays a notification sound (Ding) using HTML5 Audio."""
-    sound_url = "https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3"
-    st.markdown(f"""
-        <audio autoplay style="display:none;">
-            <source src="{sound_url}" type="audio/mp3">
-        </audio>
-    """, unsafe_allow_html=True)
-
-def trigger_js_notification(title, body):
-    """Directly triggers a notification via JS injection."""
-    js_code = f"""
-    <script>
-        if (Notification.permission === "granted") {{
-            new Notification("{title}", {{
-                body: "{body}",
-                icon: "https://cdn-icons-png.flaticon.com/512/190/190411.png"
-            }});
-        }} else {{
-            console.log("Notification permission not granted.");
-        }}
-    </script>
+def process_media(input_path, custom_name=None, index=0):
     """
-    components.html(js_code, height=0, width=0)
-
-def convert_to_quicktime_mp4(input_path, custom_name=None):
-    """
-    Standardizes ANY video input to Mac-compatible H.264/AAC 1080p MP4.
+    1. Upscales/Converts Videos to 1080p MP4.
+    2. Transcribes Videos to .txt.
+    3. Renames Images.
+    Returns: (media_path, transcript_path)
     """
     path_obj = Path(input_path)
-    if not path_obj.exists(): return None
+    if not path_obj.exists(): return None, None
 
+    # Detect media type
+    mimetypes.init()
+    kind, _ = mimetypes.guess_type(input_path)
+    is_video = kind and kind.startswith('video')
+    is_image = kind and kind.startswith('image')
+    
+    # Fallback detection
+    if not kind:
+        ext = path_obj.suffix.lower()
+        if ext in ['.mp4', '.mov', '.mkv', '.webm']: is_video = True
+        if ext in ['.jpg', '.jpeg', '.png', '.webp', '.heic']: is_image = True
+
+    # Determine Output Filename
     if custom_name:
         safe_name = sanitize_filename(custom_name)
-        output_filename = f"{safe_name}.mp4"
+        if index > 0: safe_name = f"{safe_name}_{index+1}"
+        
+        if is_video: suffix = ".mp4"
+        elif is_image: suffix = ".jpg"
+        else: suffix = path_obj.suffix
+        
+        output_filename = f"{safe_name}{suffix}"
     else:
-        output_filename = f"{path_obj.stem}_mac.mp4"
-        
+        if is_video: output_filename = f"{path_obj.stem}_mac.mp4"
+        elif is_image: output_filename = f"{path_obj.stem}.jpg"
+        else: output_filename = path_obj.name
+
     output_path = path_obj.parent / output_filename
+    transcript_path = None
 
-    try:
-        stream = ffmpeg.input(str(input_path))
-        stream = ffmpeg.output(
-            stream, 
-            str(output_path), 
-            vcodec='libx264', 
-            acodec='aac', 
-            pix_fmt='yuv420p',
-            vf='scale=1080:-2:flags=lanczos', # Force 1080p width
-            strict='experimental',
-            loglevel='error'
-        )
-        ffmpeg.run(stream, overwrite_output=True)
-        
-        if output_path.exists() and output_path.stat().st_size > 0:
-            path_obj.unlink() # Delete original raw download
-            return str(output_path)
-        return str(input_path)
-    except Exception as e:
-        print(f"Conversion Error: {e}")
-        return str(input_path)
+    # --- VIDEO PROCESSING ---
+    if is_video:
+        try:
+            # 1. Convert/Upscale
+            stream = ffmpeg.input(str(input_path))
+            stream = ffmpeg.output(
+                stream, 
+                str(output_path), 
+                vcodec='libx264', 
+                acodec='aac', 
+                pix_fmt='yuv420p',
+                vf='scale=1080:-2:flags=lanczos',
+                strict='experimental',
+                loglevel='error'
+            )
+            ffmpeg.run(stream, overwrite_output=True)
+            
+            if output_path.exists():
+                if str(input_path) != str(output_path): os.remove(input_path)
+                
+                # 2. Transcribe (Auto)
+                try:
+                    model = load_whisper()
+                    result = model.transcribe(str(output_path))
+                    
+                    txt_filename = output_path.stem + ".txt"
+                    txt_full_path = output_path.parent / txt_filename
+                    
+                    with open(txt_full_path, "w", encoding="utf-8") as f:
+                        f.write(result["text"].strip())
+                    
+                    transcript_path = str(txt_full_path)
+                except Exception as e:
+                    print(f"Transcription failed: {e}")
 
-def download_single_video(url, output_dir, cookies_path, custom_name=None):
-    # Smart URL Sanitization
-    # Only strip query params if it is NOT a standard YouTube watch link (which needs ?v=...)
+                return str(output_path), transcript_path
+
+        except Exception as e:
+            print(f"Video fail: {e}")
+            return str(input_path), None
+
+    # --- IMAGE PROCESSING ---
+    elif is_image:
+        try:
+            stream = ffmpeg.input(str(input_path))
+            stream = ffmpeg.output(stream, str(output_path), loglevel='error')
+            ffmpeg.run(stream, overwrite_output=True)
+            if output_path.exists():
+                if str(input_path) != str(output_path): os.remove(input_path)
+                return str(output_path), None
+        except:
+            if str(input_path) != str(output_path):
+                shutil.move(input_path, output_path)
+            return str(output_path), None
+
+    return str(input_path), None
+
+def download_content(url, output_dir, cookies_path, custom_name=None):
+    existing_files = set(os.listdir(output_dir))
+
+    # Smart URL Cleaning
     if "youtube.com/watch" not in url and "youtu.be/" not in url:
-        if "?" in url:
-            url = url.split("?")[0]
-    
-    # Determine domain for specific handling
-    domain = "Generic"
-    if "instagram" in url: domain = "Instagram"
-    elif "tiktok" in url: domain = "TikTok"
-    elif "youtube" in url or "youtu.be" in url: domain = "YouTube"
-    elif "pinterest" in url: domain = "Pinterest"
+        if "?" in url: url = url.split("?")[0]
 
-    # Universal Options
+    # Cookie Logic
+    active_cookies = cookies_path if "instagram.com" in url else None
+
     ydl_opts = {
-        'format': 'bestvideo+bestaudio/best', 
-        'outtmpl': str(Path(output_dir) / '%(id)s.%(ext)s'), 
-        'noplaylist': True,
+        'outtmpl': str(Path(output_dir) / '%(id)s.%(ext)s'),
+        'noplaylist': False,
         'quiet': True,
         'no_warnings': True,
-        'cookiefile': cookies_path,
+        'cookiefile': active_cookies,
         'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+        'ignoreerrors': True,
+        'format': 'bestvideo+bestaudio/best', 
     }
-    
+
+    if "youtube.com" in url or "youtu.be" in url:
+        ydl_opts['format'] = 'best[ext=mp4]/best'
+
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=True)
-            filename = ydl.prepare_filename(info)
-            
-            # Verify file existence
-            if not os.path.exists(filename):
-                video_id = info.get('id')
-                files = list(Path(output_dir).glob(f"*{video_id}*"))
-                if files: 
-                    filename = str(files[0])
-                else:
-                    # RAISE ERROR to trigger the fallback block below
-                    raise FileNotFoundError("Initial download failed to produce file")
-            
-            # Pass to converter
-            converted_path = convert_to_quicktime_mp4(filename, custom_name)
-            return converted_path, None # Success, No Error
-
+            ydl.download([url])
     except Exception as e:
-        # --- YouTube Specific Fallback ---
-        if domain == "YouTube":
-            try:
-                # Remove cookies for YouTube fallback to avoid conflicts
-                if 'cookiefile' in ydl_opts:
-                    del ydl_opts['cookiefile']
-                
-                # 'best' selects the best single file containing both video+audio
-                ydl_opts['format'] = 'best' 
-                
-                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                    info = ydl.extract_info(url, download=True)
-                    filename = ydl.prepare_filename(info)
-                    
-                    if not os.path.exists(filename):
-                        video_id = info.get('id')
-                        files = list(Path(output_dir).glob(f"*{video_id}*"))
-                        if files: filename = str(files[0])
-                        else: return None, "Fallback failed: File still not found"
-                    
-                    converted_path = convert_to_quicktime_mp4(filename, custom_name)
-                    return converted_path, None
-            except Exception as e2:
-                return None, f"YouTube Fallback Failed: {e2}"
+        pass
 
-        return None, str(e)
+    current_files = set(os.listdir(output_dir))
+    new_files = list(current_files - existing_files)
+    new_files = [f for f in new_files if not f.endswith('.part') and not f.endswith('.ytdl')]
+    new_files.sort()
+
+    if not new_files:
+        return [], [], "No files found (Check cookies or link)"
+
+    processed_media_files = []
+    processed_transcript_files = []
+
+    for i, f in enumerate(new_files):
+        full_path = os.path.join(output_dir, f)
+        media_p, trans_p = process_media(full_path, custom_name, i)
+        
+        if media_p: processed_media_files.append(media_p)
+        if trans_p: processed_transcript_files.append(trans_p)
+
+    return processed_media_files, processed_transcript_files, None
 
 # --- Main UI ---
 def main():
     st.title("📦 UniTool: All-in-One Downloader")
-    st.markdown("Supports **Instagram, TikTok, YouTube & Pinterest**. Auto-Upscales to 1080p.")
+    st.markdown("Supports **Instagram, TikTok, YouTube & Pinterest**. Auto-Upscales to 1080p + Auto-Transcribes.")
 
-    # --- Sidebar ---
     with st.sidebar:
         st.header("🔐 Authentication")
         st.info("Upload cookies if you face login issues (Required for Instagram).")
         uploaded_cookie = st.file_uploader("Upload cookies.txt", type=["txt"])
-        
         cookie_path = get_cookies_path(uploaded_cookie)
-        
-        # Optional: Allow running without cookies for TikTok/Pinterest
         if not cookie_path:
-            st.warning("⚠️ No cookies uploaded. Instagram links will likely fail. TikTok/YouTube might work.")
+            st.warning("⚠️ No cookies uploaded. Instagram links will likely fail.")
 
-    # --- Main Input ---
     st.markdown("### Paste URLs below")
     st.caption("Format: `Link` OR `Link - Custom Filename`")
     
     raw_input = st.text_area(
         "Input Area", 
         height=200, 
-        placeholder="https://www.instagram.com/reel/C-abc123/ - Insta Video\nhttps://www.tiktok.com/@user/video/12345 - TikTok Video\nhttps://youtu.be/dQw4w9WgXcQ - YouTube Video"
+        placeholder="https://www.instagram.com/reel/C-abc123/ - Insta Video\nhttps://www.tiktok.com/@user/video/12345 - TikTok Video"
     )
     
-    if st.button("Download All", type="primary"):
+    if st.button("Download & Transcribe All", type="primary"):
         lines = [line.strip() for line in raw_input.splitlines() if line.strip()]
         
         if not lines:
@@ -202,7 +216,9 @@ def main():
         else:
             progress_bar = st.progress(0, text="Starting...")
             batch_dir = tempfile.mkdtemp()
-            valid_files = []
+            
+            all_media = []
+            all_transcripts = []
             failed_lines = []
 
             for i, line in enumerate(lines):
@@ -214,15 +230,24 @@ def main():
                     url = line
                     custom_name = None
 
-                progress_bar.progress((i) / len(lines), text=f"Downloading: {custom_name if custom_name else url}...")
+                if i > 0 and ("instagram" in url or "tiktok" in url): 
+                    time.sleep(5) # Delay for rate limits
+
+                progress_bar.progress((i) / len(lines), text=f"Processing: {custom_name if custom_name else url}...")
                 
-                # Unpack tuple (path, error)
-                f_path, error_msg = download_single_video(url, batch_dir, cookie_path, custom_name)
+                # Retrieve both lists
+                m_paths, t_paths, error_msg = download_content(url, batch_dir, cookie_path, custom_name)
                 
-                if f_path and os.path.exists(f_path):
-                    valid_files.append(f_path)
-                    st.toast(f"✅ Ready: {os.path.basename(f_path)}", icon="✨")
-                else:
+                if m_paths:
+                    all_media.extend(m_paths)
+                    for p in m_paths:
+                        st.toast(f"✅ Downloaded: {os.path.basename(p)}", icon="📹")
+                
+                if t_paths:
+                    all_transcripts.extend(t_paths)
+                    st.toast(f"✅ Transcribed: {len(t_paths)} files", icon="📝")
+
+                if not m_paths:
                     failed_lines.append((url, error_msg))
                 
                 progress_bar.progress((i + 1) / len(lines), text=f"Finished {i+1}/{len(lines)}")
@@ -230,38 +255,49 @@ def main():
             progress_bar.empty()
             
             # --- Success Logic ---
-            if valid_files:
-                # 1. Play Sound (Native Player)
-                play_success_sound()
-                
-                # 2. Trigger Notification (Direct Injection)
-                trigger_js_notification(
-                    "Batch Complete", 
-                    f"{len(valid_files)} videos downloaded & converted!"
-                )
-                
-                # 3. Show Balloons
+            if all_media:
                 st.balloons()
-                st.success(f"🎉 All Done! {len(valid_files)} videos upscaled & ready.")
+                st.success(f"🎉 Success! Processed {len(all_media)} videos/images and generated {len(all_transcripts)} transcripts.")
                 
-                zip_name = "universal_downloads.zip"
-                zip_path = os.path.join(tempfile.gettempdir(), zip_name)
+                col1, col2 = st.columns(2)
                 
-                with zipfile.ZipFile(zip_path, 'w') as zipf:
-                    for file_path in valid_files:
-                        zipf.write(file_path, arcname=os.path.basename(file_path))
+                # 1. Video/Image ZIP
+                media_zip_name = "universal_media.zip"
+                media_zip_path = os.path.join(tempfile.gettempdir(), media_zip_name)
+                with zipfile.ZipFile(media_zip_path, 'w') as zipf:
+                    for f in all_media:
+                        zipf.write(f, arcname=os.path.basename(f))
                 
-                with open(zip_path, "rb") as f:
-                    st.download_button(
-                        label="📦 Download ZIP",
-                        data=f,
-                        file_name=zip_name,
-                        mime="application/zip"
-                    )
+                with col1:
+                    with open(media_zip_path, "rb") as f:
+                        st.download_button(
+                            label="📦 Download Media (ZIP)",
+                            data=f,
+                            file_name=media_zip_name,
+                            mime="application/zip",
+                            type="primary"
+                        )
+
+                # 2. Transcript ZIP
+                if all_transcripts:
+                    trans_zip_name = "transcripts.zip"
+                    trans_zip_path = os.path.join(tempfile.gettempdir(), trans_zip_name)
+                    with zipfile.ZipFile(trans_zip_path, 'w') as zipf:
+                        for f in all_transcripts:
+                            zipf.write(f, arcname=os.path.basename(f))
+                    
+                    with col2:
+                        with open(trans_zip_path, "rb") as f:
+                            st.download_button(
+                                label="📄 Download Transcripts (ZIP)",
+                                data=f,
+                                file_name=trans_zip_name,
+                                mime="application/zip"
+                            )
             
             if failed_lines:
-                st.error(f"Failed to download {len(failed_lines)} videos.")
-                with st.expander("See Failed Links & Errors"):
+                st.error(f"Failed to process {len(failed_lines)} items.")
+                with st.expander("See Failed Links"):
                     for url, err in failed_lines:
                         st.markdown(f"**Link:** `{url}`")
                         st.caption(f"Error: {err}")
