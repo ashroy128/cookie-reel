@@ -186,7 +186,7 @@ def download_content(url, output_dir, cookies_path, custom_name=None, mode="both
 
 # --- Main UI ---
 def main():
-    st.title("Insta Tool")
+    st.title("📸 Insta Tool")
     st.markdown("Instagram 1080p Batch Downloader + Transcriber")
 
     with st.sidebar:
